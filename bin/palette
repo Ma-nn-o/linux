@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# palette — print the terminal's 16 ANSI colors so you can see the theme.
+set -euo pipefail
+
+printf 'normal  '
+for i in 0 1 2 3 4 5 6 7; do
+  printf '\033[48;5;%dm  %X  \033[0m' "$i" "$i"
+done
+printf '\nbright  '
+for i in 8 9 10 11 12 13 14 15; do
+  printf '\033[48;5;%dm  %X  \033[0m' "$i" "$i"
+done
+printf '\n\ntext    '
+for i in 1 2 3 4 5 6; do
+  printf '\033[3%dmcolor%d\033[0m ' "$i" "$i"
+done
+printf '\n'

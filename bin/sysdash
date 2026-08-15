@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# sysdash — a dependency-free TUI system dashboard.
+#
+#   CPU · memory · disk · network · load · top processes, refreshed live.
+#   q quits. Pure bash + /proc, so it runs on any Linux box.
+set -euo pipefail
+
+REFRESH="${SYSDASH_REFRESH:-2}"
+
+# ---- drawing helpers -----------------------------------------------------
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[0m'
+CYAN=$'\033[36m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RED=$'\033[31m'
+
+bar() { # bar <percent> <width>  → colored meter like ▓▓▓▓░░░░░░
+  local pct=$1 width=$2 filled color
+  filled=$(( pct * width / 100 ))
+  (( filled > width )) && filled=$width
+  color=$GREEN; (( pct >= 60 )) && color=$YELLOW; (( pct >= 85 )) && color=$RED
+  printf '%s' "$color"
+  local i
+  for (( i = 0; i < filled; i++ )); do printf '▓'; done
+  printf '%s' "$DIM"
+  for (( i = filled; i < width; i++ )); do printf '░'; done
+  printf '%s' "$RESET"
+}
+
+section() { printf '%s%s── %s %s%s\n' "$BOLD" "$CYAN" "$1" \
+            "$(printf '─%.0s' $(seq 1 $(( 50 - ${#1} ))))" "$RESET"; }
+
+# ---- samplers ------------------------------------------------------------
+read_cpu() { # total and idle jiffies
+  local _ user nice system idle iowait irq softirq steal rest
+  read -r _ user nice system idle iowait irq softirq steal rest < /proc/stat
+  echo $(( user + nice + system + idle + iowait + irq + softirq + steal )) \
+       $(( idle + iowait ))
+}
+
+cpu_pct=0
+prev_total=0 prev_idle=0
+sample_cpu() {
+  local total idle dt di
+  read -r total idle < <(read_cpu)
+  dt=$(( total - prev_total )); di=$(( idle - prev_idle ))
+  (( dt > 0 )) && cpu_pct=$(( (dt - di) * 100 / dt ))
+  prev_total=$total; prev_idle=$idle
+}
+
+prev_rx=0 prev_tx=0
+net_line() {
+  local rx=0 tx=0 line iface r t
+  while read -r line; do
+    iface="${line%%:*}"; iface="${iface// /}"
+    [ "$iface" = lo ] && continue
+    case "$line" in *:*) ;; *) continue ;; esac
+    read -r r _ _ _ _ _ _ _ t _ <<< "${line#*:}"
+    rx=$(( rx + r )); tx=$(( tx + t ))
+  done < /proc/net/dev
+  local drx=$(( (rx - prev_rx) / REFRESH / 1024 )) dtx=$(( (tx - prev_tx) / REFRESH / 1024 ))
+  (( prev_rx == 0 )) && { drx=0; dtx=0; }
+  prev_rx=$rx; prev_tx=$tx
+  printf '↓ %s KB/s   ↑ %s KB/s' "$drx" "$dtx"
+}
+
+# ---- main loop -----------------------------------------------------------
+cleanup() { tput cnorm; stty echo 2>/dev/null || true; printf '\n'; exit 0; }
+trap cleanup INT TERM
+tput civis
+
+sample_cpu   # prime the counters
+while true; do
+  sleep "$REFRESH" &
+  sample_cpu
+
+  # memory
+  local_mem=$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "%d %d %d", (t-a)*100/t, (t-a)/1024, t/1024}' /proc/meminfo)
+  read -r mem_pct mem_used mem_total <<< "$local_mem"
+
+  # buffer the whole frame, then draw at once (no flicker)
+  frame=$(
+    printf '%s%s sysdash %s— %s · up %s%s\n\n' "$BOLD" "$CYAN" "$RESET$DIM" \
+      "$(hostname)" "$(uptime -p 2>/dev/null | sed 's/^up //')" "$RESET"
+
+    section "cpu · load $(cut -d' ' -f1-3 /proc/loadavg)"
+    printf '  %3d%% ' "$cpu_pct"; bar "$cpu_pct" 40; printf '\n\n'
+
+    section "memory ${mem_used}M / ${mem_total}M"
+    printf '  %3d%% ' "$mem_pct"; bar "$mem_pct" 40; printf '\n\n'
+
+    section "disk"
+    df -h --output=target,pcent,used,size 2>/dev/null \
+      | awk 'NR>1 && $1 ~ /^\/($|home|var|opt)/ {printf "  %-18s %4s  %s / %s\n", $1, $2, $3, $4}'
+    printf '\n'
+
+    section "network"
+    printf '  %s\n\n' "$(net_line)"
+
+    section "top processes"
+    ps axo pid,pcpu,pmem,comm --sort=-pcpu | head -6 \
+      | awk 'NR==1{printf "  %s%s\n","'"$DIM"'",$0} NR>1{printf "  %5s %5s%% %5s%%  %s\n",$1,$2,$3,$4}'
+    printf '%s' "$RESET"
+  )
+  clear; printf '%s\n%sq to quit%s' "$frame" "$DIM" "$RESET"
+
+  # q quits; otherwise wait out the refresh timer
+  if read -r -s -n 1 -t "$REFRESH" key 2>/dev/null; then
+    [ "$key" = q ] && { kill %1 2>/dev/null || true; cleanup; }
+  fi
+  wait %1 2>/dev/null || true
+done

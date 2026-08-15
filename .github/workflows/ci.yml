@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck bash scripts
+        run: shellcheck install.sh bin/*
+      - name: zsh syntax check
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q zsh
+          for f in zsh/.zshrc zsh/*.zsh; do zsh -n "$f"; done
+      - name: theme files are valid sh
+        run: for f in themes/*.sh; do sh -n "$f"; done

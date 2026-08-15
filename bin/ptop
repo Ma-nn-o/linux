@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# ptop — a tiny interactive process viewer.
+#
+#   c  sort by CPU (default)     m  sort by memory     q  quit
+#
+# Twenty rows, live refresh, zero dependencies beyond ps.
+set -euo pipefail
+
+REFRESH="${PTOP_REFRESH:-2}"
+sort_key="-pcpu"
+
+BOLD=$'\033[1m'; DIM=$'\033[2m'; RESET=$'\033[0m'; CYAN=$'\033[36m'
+
+cleanup() { tput cnorm; printf '\n'; exit 0; }
+trap cleanup INT TERM
+tput civis
+
+while true; do
+  label="cpu"; [ "$sort_key" = "-pmem" ] && label="mem"
+  frame=$(
+    printf '%s%s ptop %s— sorted by %s · c/m to re-sort · q to quit%s\n' \
+      "$BOLD" "$CYAN" "$RESET$DIM" "$label" "$RESET"
+    ps axo pid,user,pcpu,pmem,rss,stat,comm --sort="$sort_key" | head -21 \
+      | awk -v d="$DIM" -v r="$RESET" '
+        NR==1 { printf "%s%-7s %-10s %6s %6s %9s %-5s %s%s\n", d,$1,$2,$3,$4,$5,$6,$7,r; next }
+        { printf "%-7s %-10s %5s%% %5s%% %8sK %-5s %s\n", $1,$2,$3,$4,$5,$6,$7 }'
+  )
+  clear; printf '%s' "$frame"
+
+  if read -r -s -n 1 -t "$REFRESH" key 2>/dev/null; then
+    case "$key" in
+      q) cleanup ;;
+      c) sort_key="-pcpu" ;;
+      m) sort_key="-pmem" ;;
+    esac
+  fi
+done

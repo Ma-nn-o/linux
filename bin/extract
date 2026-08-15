@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# extract — one command for every archive format.
+#
+#   extract file.tar.gz [more files...]
+set -euo pipefail
+
+if [ $# -eq 0 ]; then
+  echo "usage: extract <archive> [archive...]" >&2
+  exit 1
+fi
+
+for f in "$@"; do
+  if [ ! -f "$f" ]; then
+    echo "extract: '$f' is not a file" >&2
+    continue
+  fi
+  case "$f" in
+    *.tar.bz2|*.tbz2) tar xjf "$f" ;;
+    *.tar.gz|*.tgz)   tar xzf "$f" ;;
+    *.tar.xz|*.txz)   tar xJf "$f" ;;
+    *.tar.zst)        tar --zstd -xf "$f" ;;
+    *.tar)            tar xf "$f" ;;
+    *.bz2)            bunzip2 -k "$f" ;;
+    *.gz)             gunzip -k "$f" ;;
+    *.xz)             unxz -k "$f" ;;
+    *.zst)            unzstd "$f" ;;
+    *.zip)            unzip -q "$f" ;;
+    *.rar)            unrar x "$f" ;;
+    *.7z)             7z x "$f" ;;
+    *)                echo "extract: don't know how to extract '$f'" >&2 ;;
+  esac
+done
